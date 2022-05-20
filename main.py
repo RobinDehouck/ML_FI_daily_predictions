@@ -5,12 +5,14 @@ import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, confusion_matrix
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.metrics import precision_recall_fscore_support
 import joblib
 
 def get_clean_df(yf_token):
 	data = yf.Ticker(yf_token + "-USD")
-	df = data.history(period="1y", interval = '1d')
+	df = data.history(period="2y", interval = '1d')
 	rsidata = utils.rsi.rsi(df)
 	temp = rsidata.to_frame()
 	df['rsi'] = temp
@@ -37,35 +39,49 @@ def get_clean_df(yf_token):
 	df_v2['decile_price']= pd.qcut(df['Close'],q = 20, labels = False)
 	df_v2['decile_price_tomorrow'] = df_v2['decile_price'].shift(-1)
 	df_v2 = df_v2.dropna()
-
+	df_v2.to_csv('btc_usd_05-17-2022.csv')
 	return (df_v2)
 
+# print(get_clean_df("BTC").columns)
 total_acc = 0
-for i in range(100):
-	train = get_clean_df("BTC")
-	list_var_cat = train.select_dtypes('float').columns.tolist()
-	list_var_cat += train.select_dtypes('int').columns.tolist()
-	for i in list_var_cat:
-		le = LabelEncoder()
-		train[i] = le.fit_transform(train[i])
+tokens = ['BNB', 'SOL', 'DOGE', 'AVAX', 'ADS', 'ILV', 'WAXP']
+for token in tokens:
+	total_acc_bis = 0
+	df = get_clean_df(token) #BNB 66 SOL 67 DOGE 69 AVAX 65 ADS 73 ILV 65 WAXP 67
+	for i in range(1):
+		train = df
+		for i in train.columns:
+			le = LabelEncoder()
+			train[i] = le.fit_transform(train[i])
+		train, test = train_test_split(train, test_size = 0.2)
+		var_to_use = train.columns.tolist()
+		var_to_use.remove('decile_price_tomorrow')
+		var_to_use.remove('decile_price')
 
-	train, test = train_test_split(train, test_size = 0.2)
-	var_to_use = train.columns.tolist()
-	var_to_use.remove('decile_price_tomorrow')
-	var_to_use.remove('decile_ao')
-	var_to_use.remove('decile_apo')
-	var_to_use.remove('decile_cmo')
+		rf = RandomForestRegressor()
+		rf.fit(train[var_to_use], train['decile_price_tomorrow'])
 
-
-	rf = RandomForestClassifier()
-	rf.fit(train[var_to_use], train['decile_price_tomorrow'])
-
-	pred = rf.predict(test[var_to_use])
-	test['pred'] = pred
-	acc = accuracy_score(test['decile_price_tomorrow'], pred)
-	# joblib.dump(rf, "./random_forest_vol_rsi_v2.joblib")
-	# print(acc)
-	# print(test)
-	total_acc+=acc
-print(var_to_use)
-print(total_acc/100)
+		pred = rf.predict(test[var_to_use])
+		pred = pred.round()
+		test['pred'] = pred
+		acc = accuracy_score(test['decile_price_tomorrow'], pred)
+		joblib.dump(rf, "models/random_forest_daily_" + token + ".joblib")
+		j = 0
+		count_good = 0
+		count_bad = 0
+		while j < len(test):
+			if test['decile_price'][j] != test['pred'][j] and test['decile_price'][j] != test['decile_price_tomorrow'][j]:
+				print(test.loc[[test.index[j]]])
+				if test['decile_price_tomorrow'][j] > test['decile_price'][j] and test['pred'][j] > test['decile_price'][j]:
+					count_good+=1
+				elif test['decile_price_tomorrow'][j] < test['decile_price'][j] and test['pred'][j] < test['decile_price'][j]:
+					count_good+=1
+				else:
+					count_bad+=1
+			j+=1
+		total_acc+=acc
+		# print(acc)
+		total_acc_bis+= count_good / (count_good + count_bad)
+		# print(count_good, count_bad, count_good / (count_good + count_bad))
+	# print(var_to_use)
+	print(token, total_acc_bis/1)
